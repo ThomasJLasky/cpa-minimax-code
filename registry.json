@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "minimax-code",
+      "name": "MiniMax Code",
+      "description": "把 MiniMax Code 账号接入 CLIProxyAPI：设备码登录、自动续期、原生 Anthropic Messages 透传（thinking / tool_use 保真）、积分额度查询与每日签到。消耗账号积分池，不占按量 API Key。",
+      "author": "ThomasJLasky",
+      "repository": "https://github.com/ThomasJLasky/cpa-minimax-code",
+      "homepage": "https://github.com/ThomasJLasky/cpa-minimax-code",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "MiniMaxCode",
+        "Anthropic",
+        "Auth",
+        "Quota",
+        "Management"
+      ]
+    }
+  ]
+}

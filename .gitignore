@@ -1,0 +1,21 @@
+# 构建产物
+*.dylib
+*.so
+*.dll
+*.h
+minimax-code
+plugtest
+
+# 本地状态
+*.log
+proxy.log
+checkin-state.json
+config.json
+
+# 系统
+.DS_Store
+.idea/
+.vscode/
+
+# Go
+/dist/
