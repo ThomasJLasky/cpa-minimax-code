@@ -192,6 +192,17 @@ func hostCall(method string, req any) (json.RawMessage, error) {
 	return env.Result, nil
 }
 
+// hostLog 把插件内部的失败写进宿主日志。回调带上 callbackID 才能挂上 request_id。
+// 日志本身失败不能影响主流程，所以忽略返回值。
+func hostLog(callbackID, level, message string, fields map[string]any) {
+	_, _ = hostCall(methodHostLog, hostLogRequest{
+		HostCallbackID: callbackID,
+		Level:          level,
+		Message:        message,
+		Fields:         fields,
+	})
+}
+
 func okEnvelope(v any) ([]byte, error) {
 	raw, errMarshal := json.Marshal(v)
 	if errMarshal != nil {

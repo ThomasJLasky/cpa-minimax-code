@@ -202,6 +202,8 @@ type executorRequest struct {
 	StorageJSON     []byte            `json:"StorageJSON,omitempty"`
 	Metadata        map[string]any    `json:"Metadata,omitempty"`
 	StreamID        string            `json:"stream_id,omitempty"`
+	// HostCallbackID 标识本次调用的宿主回调上下文，host.log 带上它日志才能挂到请求 id 上。
+	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
 type executorResponse struct {
@@ -219,6 +221,13 @@ type streamEmitRequest struct {
 type streamCloseRequest struct {
 	StreamID string `json:"stream_id"`
 	Error    string `json:"error,omitempty"`
+}
+
+type hostLogRequest struct {
+	HostCallbackID string         `json:"host_callback_id,omitempty"`
+	Level          string         `json:"level,omitempty"`
+	Message        string         `json:"message,omitempty"`
+	Fields         map[string]any `json:"fields,omitempty"`
 }
 
 // ---------------------------------------------------------------- 管理

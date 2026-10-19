@@ -29,7 +29,7 @@ MiniMax Code 的订阅额度不在开放平台 API Key 上，而在**账号级�
 
 - **原生协议**：插件声明 `executor_input_formats: ["anthropic"]`，宿主命中后**不做翻译**，把 `/v1/messages` 原始请求体直接交给插件转发给 mavis。`thinking` 块（带 signature）、`tool_use` 全部原样保真。
 - **设备码登录**：OAuth 2.0 + PKCE（`client_id=mcode-public`），面板里点一下就能加账号，不依赖本机装没装 Code 客户端。
-- **自动续期**：access token 1 小时过期、refresh token 每次轮换。插件只实现 `auth.refresh`，由宿主按 `NextRefreshAfter` 调度并持久化新凭证。
+- **自动续期**：access token 1 小时过期、refresh token 每次轮换。插件只实现 `auth.refresh`，由宿主按 `NextRefreshAfter` 调度并持久化新凭证。注意宿主只给内置 provider 配了续期提前量，插件必须在 `AuthData.Metadata` 里同时给出 `refresh_interval_seconds`、`expires_at`、`refresh_token`，否则 auto-refresh 循环根本不会调度（详见 `auth.go:buildAuthData`）。
 - **额度查询**：`quota_provider` 读 `credit/details`，汇总成「剩余 / 已消耗 / 累计 / 批次 / 7 天内过期」。
 - **每日签到**：后台协程在北京时间 10:00 后自动领取，claim 幂等；也能在控制台页手动点。
 - **错误分类**：上游 400/401/402/403/429/529 映射成 Anthropic 的 `error.type`，流式下发 `event: error`。
@@ -139,7 +139,7 @@ curl "http://127.0.0.1:8317/v0/resource/plugins/minimax-code/status"
 
 ```json
 {"type":"error","error":{"type":"invalid_request_error",
- "message":"minimax upstream 400: invalid params, model[MiniMax-M3] does not support max tokens > 524288 (2013)"}}
+ "message":"minimax upstream status 400: invalid params, model[MiniMax-M3] does not support max tokens > 524288 (2013)"}}
 ```
 
 | 上游状态 | `error.type` |
@@ -153,6 +153,10 @@ curl "http://127.0.0.1:8317/v0/resource/plugins/minimax-code/status"
 
 > **HTTP 状态码仍然是 500**：插件错误只能以字符串跨 C ABI 传回宿主，`ErrorMessage.StatusCode` 拿不到。
 > `error.type` 是准的，按类型分支处理的客户端不受影响。
+>
+> 消息里刻意写成 `upstream status 401` 而不是 `upstream 401`：宿主的 `isUnauthorizedError` 只认
+> `StatusCode==401` 或文本 `status 401` / `401 unauthorized`，命中它才会先调 `auth.refresh` 再重试，
+> 而不是把这个账号判死、让后面的请求全变成 `auth_unavailable` 503。
 
 ## 工作原理
 
@@ -181,6 +185,12 @@ anthropic-version: 2023-06-01
 | `auth_provider` | `auth.parse` / `auth.login.start` / `auth.login.poll` / `auth.refresh` |
 | `model_provider` | `model.static` / `model.for_auth` |
 | `executor` | `executor.execute` / `execute_stream`（`host.stream.emit` 推流）/ `count_tokens` |
+
+> **`host.stream.emit` 的 chunk 必须一行一个**（`data: {…}\n` 单独一块，`event: …\n`、空行各自一块）。
+> 宿主的 claude→openai / claude→responses 流式转换器是先 `bytes.HasPrefix(chunk, "data:")` 再解析的，
+> 把 `event:`+`data:` 打包成一帧发过去会被整帧丢弃，表现成无法定位的
+> `empty_stream: upstream stream closed before first payload`（同协议直透 `/v1/messages` 时看不出来）。
+> 逐行发和宿主内置 claude executor 的行为一致，字节流重组后客户端看到的 SSE 不变。
 | `quota_provider` | `quota.describe` / `quota.fetch` |
 | `management_api` | `/status`、`/checkin`、`/console` |
 
@@ -227,6 +237,7 @@ cd testharness && CGO_ENABLED=1 go build -o /tmp/plugtest .
 2. **签到归因用 `user_id=0`**：拿不到 `realUserID`，服务端按 token 认账号；实测可正常 claim，但出现 `not-claimable` 时需补一次 `user/info`。
 3. **`model_prefix` 不生效**：插件 provider 的前缀来自 auth 的 `Prefix` 字段，config 里的 `model_prefix` 不会自动传下去，所以模型 id 是硬编码的 `mm-*`。
 4. **私有端点**：`/mavis/api/v1/llm/v1/messages` 是 Code 客户端的内部路由，上游改版即失效。base-url 和 headers 都可以在 `upstream.go` 一处改掉。
+5. **设备码登录会话在插件内存里**：宿主要求 `auth.login.start` 返回的 `State` ≤128 字符且只含 `[A-Za-z0-9._-]`，所以 `device_code` + PKCE verifier 只能留在插件进程内，`State` 只是一个 32 位短 token。代价是宿主重启或插件热重载会丢弃未完成的登录，面板上重新点一次即可（`auth.login.poll` 会明确报「登录会话已过期或不存在」）。
 
 ## 安全与隐私
 

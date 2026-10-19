@@ -381,12 +381,18 @@ func upstreamErrorMessage(body string) string {
 }
 
 // upstreamError 返回一个「消息本身就是 Anthropic 错误 JSON」的 error。
+//
+// 措辞里的 "status %d" 是有意为之：宿主的 isUnauthorizedError 只认 StatusCode==401
+// 或文本含 "status 401" / "401 unauthorized"（sdk/cliproxy/auth/conductor_cooldown.go:1531），
+// 而插件错误只能以字符串跨 C ABI 传回、StatusCode 拿不到。写成 "status 401" 才能让宿主
+// 在收到 401 时先调 auth.refresh 再重试，而不是直接把账号判死、整个 provider 变成
+// auth_unavailable。
 func upstreamError(status int, body string) error {
 	payload := map[string]any{
 		"type": "error",
 		"error": map[string]any{
 			"type":    anthropicErrorType(status),
-			"message": fmt.Sprintf("minimax upstream %d: %s", status, upstreamErrorMessage(body)),
+			"message": fmt.Sprintf("minimax upstream status %d: %s", status, upstreamErrorMessage(body)),
 		},
 	}
 	raw, _ := json.Marshal(payload)
@@ -399,7 +405,7 @@ func upstreamErrorFrame(status int, body string) []byte {
 		"type": "error",
 		"error": map[string]any{
 			"type":    anthropicErrorType(status),
-			"message": fmt.Sprintf("minimax upstream %d: %s", status, upstreamErrorMessage(body)),
+			"message": fmt.Sprintf("minimax upstream status %d: %s", status, upstreamErrorMessage(body)),
 		},
 	}
 	raw, _ := json.Marshal(payload)
