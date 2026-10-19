@@ -380,6 +380,36 @@ func upstreamErrorMessage(body string) string {
 	return truncate(body, 300)
 }
 
+// echoedModel 取出上游回显的 model 名。既能吃整份 JSON 响应，也能吃一行 SSE
+// （"data: {…}"）；[DONE]、event: 行、空行一律返回空串。
+func echoedModel(payload []byte) string {
+	body := bytes.TrimSpace(payload)
+	if bytes.HasPrefix(body, []byte("data:")) {
+		body = bytes.TrimSpace(body[len("data:"):])
+	}
+	if !bytes.HasPrefix(body, []byte("{")) {
+		return ""
+	}
+	var doc struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &doc) != nil {
+		return ""
+	}
+	return doc.Model
+}
+
+// modelFallbackMessage 报告 mavis 的静默回落：模型名它不认识时**不报错**，而是换成
+// MiniMax-M3 跑掉并照常计积分（实测 MiniMax-M9 / minimax-m3 小写 / 拼错的名字全部回落到 M3）。
+// 不拦的话面板写着 M2.7、实际给你跑 M3，上游改名当天就会踩中。
+func modelFallbackMessage(wanted, got string) string {
+	return fmt.Sprintf("requested model %q but upstream actually ran %q; mavis silently falls back on unknown model names", wanted, got)
+}
+
+func modelFallbackError(wanted, got string) error {
+	return upstreamError(http.StatusBadRequest, modelFallbackMessage(wanted, got))
+}
+
 // upstreamError 返回一个「消息本身就是 Anthropic 错误 JSON」的 error。
 //
 // 措辞里的 "status %d" 是有意为之：宿主的 isUnauthorizedError 只认 StatusCode==401

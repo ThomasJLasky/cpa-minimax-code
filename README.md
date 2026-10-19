@@ -81,12 +81,23 @@ grep "minimax-code" "$CPA_HOME/cliproxyapi.log" | tail -3
 
 ## 模型
 
-| 客户端 ID | 上游 model |
-|---|---|
-| `mm-m3.1-flash` | `MiniMax-M3.1-Flash-Preview` |
-| `mm-m3` | `MiniMax-M3` |
-| `mm-m2.7` | `MiniMax-M2.7` |
-| `mm-m2.7-highspeed` | `MiniMax-M2.7-highspeed` |
+| 客户端 ID | 上游 model | 上下文 | 最大输出 |
+|---|---|---|---|
+| `mm-m3.1-flash` | `MiniMax-M3.1-Flash` | 1,000,000 | 512,000 |
+| `mm-m3` | `MiniMax-M3` | 1,000,000 | 512,000 |
+| `mm-m2.7` | `MiniMax-M2.7` | 204,800 | 131,072 |
+| `mm-m2.7-highspeed` | `MiniMax-M2.7-highspeed` | 204,800 | 131,072 |
+
+> 上下文/输出取自 MiniMax Code 客户端自己加载的 models.dev 目录
+> （`~/.minimax/cache/models-dev-catalog.json`），并且都低于 mavis 实测的 `max_tokens`
+> 硬上限（M3 家族 524288、M2.x 196608），所以声明值一定可用。上游没有可查的模型清单接口
+> （`/mavis/api/v1/llm/v1/models` 返回 `direct_route_not_configured`），要核对只能拿
+> `max_tokens` 超限报错里的模型名 + 响应回显逐个探。
+>
+> **上游对不认识的模型名不报错，会静默换成 `MiniMax-M3` 跑掉并照常计积分。** 插件因此会比对
+> 响应回显的 `model` 与请求的上游名，不一致就直接报 `invalid_request_error`（流式在
+> `message_start` 帧上拦，不会先吐内容），并在宿主日志里留一条
+> `minimax-code: upstream switched model`。上游改名当天靠这个发现，而不是事后猜。
 
 > 用 `mm-` 前缀是刻意的：宿主按模型 id 去重、priority 高的胜出，`minimax-m3` 这类裸名容易被别的插件（比如 WorkBuddy）遮住。
 

@@ -38,6 +38,7 @@ func handleExecutorExecute(ctx context.Context, request []byte) (any, error) {
 	callCtx, cancel := context.WithTimeout(ctx, requestTimeout())
 	defer cancel()
 
+	upstream := upstreamForPayload(req.Payload, req.Model)
 	httpReq, errReq := newMessagesRequest(callCtx, st.Region, st.AccessToken, rewriteModel(req.Payload, req.Model))
 	if errReq != nil {
 		return nil, errReq
@@ -56,6 +57,14 @@ func handleExecutorExecute(ctx context.Context, request []byte) (any, error) {
 			"body":   truncate(string(body), 500),
 		})
 		return nil, upstreamError(resp.StatusCode, string(body))
+	}
+	if got := echoedModel(body); got != "" && got != upstream {
+		hostLog(req.HostCallbackID, "error", "minimax-code: upstream switched model", map[string]any{
+			"requested": upstream,
+			"actual":    got,
+			"model":     req.Model,
+		})
+		return nil, modelFallbackError(upstream, got)
 	}
 	return executorResponse{
 		Payload: restoreModelJSON(body, req.Model),
@@ -83,11 +92,12 @@ func handleExecutorExecuteStream(ctx context.Context, request []byte) (any, erro
 
 	streamID := req.StreamID
 	callbackID := req.HostCallbackID
+	upstream := upstreamForPayload(req.Payload, req.Model)
 	payload := rewriteModel(req.Payload, req.Model)
 	region := st.Region
 	token := st.AccessToken
 
-	go streamUpstream(streamID, callbackID, region, token, payload, req.Model)
+	go streamUpstream(streamID, callbackID, region, token, payload, req.Model, upstream)
 
 	return struct {
 		Headers map[string][]string `json:"headers,omitempty"`
@@ -100,7 +110,7 @@ func handleExecutorExecuteStream(ctx context.Context, request []byte) (any, erro
 // 且通道关闭时会把它报成 "empty_stream: upstream stream closed before first payload"
 // （sdk/cliproxy/auth/conductor_stream.go:437），真实原因（emit 失败 / 上游不可达）
 // 就丢了，日志里只留下一条无法定位的 empty_stream。
-func streamUpstream(streamID, callbackID, region, token string, payload []byte, clientModel string) {
+func streamUpstream(streamID, callbackID, region, token string, payload []byte, clientModel, upstream string) {
 	ctx, cancel := context.WithTimeout(context.Background(), streamTimeout)
 	defer cancel()
 
@@ -151,6 +161,7 @@ func streamUpstream(streamID, callbackID, region, token string, payload []byte, 
 	}
 
 	buf := bufio.NewReaderSize(resp.Body, 64<<10)
+	echoChecked := false
 	for {
 		// 一次一行，且保留结尾的 \n：宿主的 claude→openai/responses 流式转换器
 		// 只认以 "data:" 开头的 chunk（internal/translator/claude/openai/*\/init.go 注册的
@@ -161,6 +172,22 @@ func streamUpstream(streamID, callbackID, region, token string, payload []byte, 
 		// 字节流原样重组，客户端看到的 SSE 不变。
 		line, errRead := buf.ReadBytes('\n')
 		if len(line) > 0 {
+			if !echoChecked {
+				if got := echoedModel(line); got != "" {
+					echoChecked = true
+					if got != upstream {
+						hostLog(callbackID, "error", "minimax-code: upstream switched model", map[string]any{
+							"requested": upstream,
+							"actual":    got,
+							"model":     clientModel,
+						})
+						frame := upstreamErrorFrame(http.StatusBadRequest, modelFallbackMessage(upstream, got))
+						_, _ = hostCall(methodHostStreamEmit, streamEmitRequest{StreamID: streamID, Payload: frame})
+						_, _ = hostCall(methodHostStreamClose, streamCloseRequest{StreamID: streamID})
+						return
+					}
+				}
+			}
 			chunk := restoreModelChunk(line, clientModel)
 			if _, errEmit := hostCall(methodHostStreamEmit, streamEmitRequest{StreamID: streamID, Payload: chunk}); errEmit != nil {
 				// 宿主侧已关闭（客户端断开或 bridge 报错），日志记一下再停。
