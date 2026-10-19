@@ -21,7 +21,8 @@ jobs:
           - os: macos-14
             goos: darwin
             goarch: arm64
-          - os: macos-13
+          # darwin/amd64 在 Apple Silicon 上交叉编译，避免 macos-13（Intel）排队
+          - os: macos-14
             goos: darwin
             goarch: amd64
           - os: ubuntu-22.04

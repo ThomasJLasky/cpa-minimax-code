@@ -22,6 +22,13 @@ esac
 mkdir -p dist
 OUT="dist/${PLUGIN_ID}.${EXT}"
 
+# 在 Apple Silicon 上交叉编 darwin/amd64：clang 支持 -arch，不需要 Intel 机器。
+HOST_GOARCH="$(go env GOARCH)"
+if [[ "$GOOS" == "darwin" && "$GOARCH" == "amd64" && "$HOST_GOARCH" == "arm64" ]]; then
+  export CC="clang -arch x86_64"
+  echo "cross-compiling darwin/amd64 with CC='$CC'"
+fi
+
 echo "building ${PLUGIN_ID} v${VERSION} for ${GOOS}/${GOARCH}"
 CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" \
   go build -trimpath -buildmode=c-shared -o "$OUT" .
