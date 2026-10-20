@@ -48,6 +48,35 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: ./scripts/build.sh --package
 
+      - name: smoke test zip layout
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -o 'pluginVersion = "[^"]*"' dispatch.go | head -1 | cut -d'"' -f2)"
+          case "$GOOS" in
+            darwin) EXT=dylib ;;
+            windows) EXT=dll ;;
+            *) EXT=so ;;
+          esac
+          ZIP="dist/minimax-code_${VERSION}_${GOOS}_${GOARCH}.zip"
+          echo "checking $ZIP"
+          test -f "$ZIP"
+          PY="$(command -v python3 || command -v python)"
+          "$PY" - "$ZIP" "minimax-code.${EXT}" <<'PY'
+          import sys, zipfile
+          name, expected = sys.argv[1], sys.argv[2]
+          with zipfile.ZipFile(name) as zf:
+              names = zf.namelist()
+              assert names == [expected], f"zip layout unexpected: {names}"
+              info = zf.infolist()[0]
+              assert info.file_size > 0, "artifact is empty"
+          print(f"ok: {name} -> {names}")
+          PY
+
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.goos }}-${{ matrix.goarch }}
