@@ -132,9 +132,28 @@ func runCheckin(ctx context.Context) ([]checkinResult, error) {
 	checkinMu.Lock()
 	lastResults = results
 	lastCheckinAt = time.Now()
-	lastCheckinDate = beijingDate()
+	// 只有至少一个账号给出了真实结果（claimed / already / not-claimable）才把今天记为已完成。
+	// 全是 error 时不能记，否则机器睡眠跨过 10:00、醒来时凭据还没续上的那次尝试会把当天
+	// 标成已签，之后每 20 分钟的重试全部跳过，积分被静默吞掉。
+	if !everyAccountErrored(results) {
+		lastCheckinDate = beijingDate()
+	}
 	checkinMu.Unlock()
 	return results, nil
+}
+
+// everyAccountErrored 判断这一轮是不是什么都没拿到结果。
+// 还没有账号时也算「没结果」：那时重试是零成本的本机调用，不该占用当天的一次性名额。
+func everyAccountErrored(results []checkinResult) bool {
+	if len(results) == 0 {
+		return true
+	}
+	for _, r := range results {
+		if r.Status != "error" {
+			return false
+		}
+	}
+	return true
 }
 
 func beijingDate() string {
@@ -160,11 +179,16 @@ func startCheckinScheduler() {
 	})
 }
 
+// checkinNotice 是当前上游行为的说明：claim 只发放积分，不会触发重置卡获取。
+// 上游哪天支持一并领取，改这一处就够了（控制台页与 /status 都读它）。
+const checkinNotice = "签到仅发放积分，不会触发重置卡获取"
+
 func checkinState() map[string]any {
 	checkinMu.Lock()
 	defer checkinMu.Unlock()
 	state := map[string]any{
 		"last_date": lastCheckinDate,
+		"notice":    checkinNotice,
 	}
 	if !lastCheckinAt.IsZero() {
 		state["last_run_at"] = lastCheckinAt.Format(time.RFC3339)

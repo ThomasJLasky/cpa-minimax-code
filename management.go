@@ -165,6 +165,8 @@ const consoleHTML = `<!doctype html>
  button:hover{background:#f2f2f7}
  .row{display:flex;align-items:center;gap:12px;margin-bottom:16px}
  .msg{color:#8e8e93;font-size:12px}
+ .notice{background:#fff8e6;border:1px solid #f2e3b8;color:#7a5b00;border-radius:8px;padding:9px 12px;font-size:12.5px;margin:-4px 0 18px}
+ .notice:empty{display:none}
 </style></head>
 <body>
 <h1>MiniMax Code</h1>
@@ -174,6 +176,7 @@ const consoleHTML = `<!doctype html>
   <button id="btn">立即签到</button>
   <span class="msg" id="msg"></span>
 </div>
+<div class="notice" id="notice"></div>
 
 <div class="cards" id="cards"></div>
 
@@ -195,6 +198,7 @@ function load(){
     document.getElementById('rows').innerHTML=d.models.map(m=>
       '<tr><td><code>'+m.ID+'</code></td><td>'+m.Name+'</td><td>'+m.ContextLength+'</td><td>'+m.MaxCompletionTokens+'</td></tr>').join('');
     const ck=d.checkin||{};
+    document.getElementById('notice').textContent=ck.notice||'';
     if(ck.last_run_at){
       const rs=(ck.results||[]).map(r=>r.account+': '+r.status+(r.points?' +'+r.points:'')).join('；');
       document.getElementById('msg').textContent='上次签到 '+ck.last_run_at+(rs?' — '+rs:'');

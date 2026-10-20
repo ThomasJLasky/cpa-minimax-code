@@ -270,7 +270,9 @@ func langFor(region string) string {
 	return "zh"
 }
 
-// claimCheckin 直接调用 claim（status 面板的 days 数组会返回空，claim 才是权威）。
+// claimCheckin 直接调用 claim。claim 才是权威且幂等（claim_result=1 本次领到、=2 今日已领）；
+// /signin/status 需要 timezone_id 参数，缺了会直接返回 1406010011 invalid timezone_id，
+// 所以插件不依赖它拿连签面板。
 func claimCheckin(ctx context.Context, st storage) (map[string]any, error) {
 	nowMS := time.Now().UnixMilli()
 	query := signinQuery(st, nowMS)

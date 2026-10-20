@@ -142,6 +142,9 @@ curl "http://127.0.0.1:8317/v0/resource/plugins/minimax-code/console?action=chec
 curl "http://127.0.0.1:8317/v0/resource/plugins/minimax-code/status"
 ```
 
+> 面板会固定提示一条当前行为：**签到仅发放积分，不会触发重置卡获取**（上游文案位 `signin/config` 全空、
+> `reset_card` 接口在本机探测下 404，所以这条是插件侧写死的行为说明，改 `checkin.go:checkinNotice` 一处即可）。
+
 签到积分是**分批发放、各自过期**的（每天 400，连签第 4/7 天 1000，30 天过期），额度页会把最近一批的到期时间单独标出来。
 
 ## 错误处理
