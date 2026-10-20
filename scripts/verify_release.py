@@ -24,13 +24,13 @@ CHUNK = 65536
 
 
 def http_get(url: str, headers: dict[str, str] | None = None) -> tuple[bytes, dict[str, str]]:
-    req = urllib.request.Request(url, headers={"Accept": "application/octet/vnd.octet}", **(headers or {}))
+    req = urllib.request.Request(url, headers={"Accept": "application/octet-stream", **(headers or {})})
     with urllib.request.urlopen(req, timeout=60) as resp:
         return resp.read(), dict(resp.headers)
 
 
 def release_assets(owner: str, repo: str, tag: str) -> dict[str, str]:
-    body, _ = http_get(f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}")
+    body, _ = http_get(f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}", {"Accept": "application/vnd.github+json"})
     data = json.loads(body)
     return {asset["name"]: asset["url"] for asset in data.get("assets", [])}
 
@@ -45,7 +45,10 @@ def inspect_zip(url: str) -> tuple[int, list[zipfile.ZipInfo]]:
     idx = tail.rfind(b"PK\x05\x06")
     if idx < 0:
         raise RuntimeError("end of central directory not found")
-    _, _, _, _, cd_size, cd_offset = struct.unpack("<IHHHHII", tail[idx : idx + 22])
+    eocd = tail[idx : idx + 22]
+    if len(eocd) < 22:
+        raise RuntimeError("incomplete EOCD signature")
+    _, _, _, _, cd_size, cd_offset = struct.unpack("<IHHHHII", eocd)
 
     cd, _ = http_get(url, {"Range": f"bytes={cd_offset}-{cd_offset + cd_size - 1}"})
     infos: list[zipfile.ZipInfo] = []
