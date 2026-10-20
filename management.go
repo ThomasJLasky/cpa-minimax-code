@@ -167,6 +167,13 @@ const consoleHTML = `<!doctype html>
  .msg{color:#8e8e93;font-size:12px}
  .notice{background:#fff8e6;border:1px solid #f2e3b8;color:#7a5b00;border-radius:8px;padding:9px 12px;font-size:12.5px;margin:-4px 0 18px}
  .notice:empty{display:none}
+ .streak{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px}
+ .streak:empty{display:none}
+ .streak .d{border:1px solid #e5e5ea;background:#fff;border-radius:8px;padding:6px 10px;min-width:56px;text-align:center}
+ .streak .d.got{background:#f3fbf5;border-color:#bfe6c8}
+ .streak .d.today{border-color:#0a84ff;box-shadow:0 0 0 1px #0a84ff inset}
+ .streak .n{font-size:11px;color:#8e8e93;margin-bottom:2px}
+ .streak .p{font-size:14px;font-weight:500}
 </style></head>
 <body>
 <h1>MiniMax Code</h1>
@@ -177,6 +184,7 @@ const consoleHTML = `<!doctype html>
   <span class="msg" id="msg"></span>
 </div>
 <div class="notice" id="notice"></div>
+<div class="streak" id="streak"></div>
 
 <div class="cards" id="cards"></div>
 
@@ -199,6 +207,9 @@ function load(){
       '<tr><td><code>'+m.ID+'</code></td><td>'+m.Name+'</td><td>'+m.ContextLength+'</td><td>'+m.MaxCompletionTokens+'</td></tr>').join('');
     const ck=d.checkin||{};
     document.getElementById('notice').textContent=ck.notice||'';
+    const panel=((ck.results||[]).find(r=>r.panel&&r.panel.length)||{}).panel||[];
+    document.getElementById('streak').innerHTML=panel.map(x=>
+      '<div class="d'+(x.status===3?' got':'')+(x.today?' today':'')+'"><div class="n">第'+x.day+'天'+(x.today?' · 今天':'')+'</div><div class="p">+'+x.points+(x.bonus_points?' +'+x.bonus_points:'')+'</div></div>').join('');
     if(ck.last_run_at){
       const rs=(ck.results||[]).map(r=>r.account+': '+r.status+(r.points?' +'+r.points:'')).join('；');
       document.getElementById('msg').textContent='上次签到 '+ck.last_run_at+(rs?' — '+rs:'');

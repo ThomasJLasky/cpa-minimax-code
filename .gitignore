@@ -19,3 +19,6 @@ config.json
 
 # Go
 /dist/
+
+# Python 缓存（scripts/*.py 运行时产生）
+__pycache__/

@@ -35,12 +35,56 @@ type hostAuthGetResponse struct {
 }
 
 type checkinResult struct {
-	Account string `json:"account"`
-	Status  string `json:"status"`
-	Day     int    `json:"day,omitempty"`
-	Points  int    `json:"points,omitempty"`
-	Expire  string `json:"expire_at,omitempty"`
-	Detail  string `json:"detail,omitempty"`
+	Account string      `json:"account"`
+	Status  string      `json:"status"`
+	Day     int         `json:"day,omitempty"`
+	Points  int         `json:"points,omitempty"`
+	Expire  string      `json:"expire_at,omitempty"`
+	Detail  string      `json:"detail,omitempty"`
+	Panel   []signinDay `json:"panel,omitempty"`
+}
+
+// signinDay 是 claim 响应里 data.panel.days 的一项——claim 本身就带连签面板，
+// 不需要另开 /signin/status（那个接口还要求 timezone_id）。
+// status 目前只观测到 3（对应已领完的日子），其余取值不猜语义，面板上不标注。
+type signinDay struct {
+	Day    int  `json:"day"`
+	Points int  `json:"points"`
+	Status int  `json:"status"`
+	Today  bool `json:"today"`
+	Bonus  int  `json:"bonus_points,omitempty"`
+}
+
+func parseSigninPanel(raw any) []signinDay {
+	list, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	days := make([]signinDay, 0, len(list))
+	for _, item := range list {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		day := signinDay{}
+		if v, ok := entry["day_no"].(float64); ok {
+			day.Day = int(v)
+		}
+		if v, ok := entry["points"].(float64); ok {
+			day.Points = int(v)
+		}
+		if v, ok := entry["status"].(float64); ok {
+			day.Status = int(v)
+		}
+		if v, ok := entry["bonus_points"].(float64); ok {
+			day.Bonus = int(v)
+		}
+		if v, ok := entry["is_today"].(bool); ok {
+			day.Today = v
+		}
+		days = append(days, day)
+	}
+	return days
 }
 
 var (
@@ -125,6 +169,9 @@ func runCheckin(ctx context.Context) ([]checkinResult, error) {
 		}
 		if v, ok := data["expire_at_ms"].(float64); ok && v > 0 {
 			result.Expire = time.UnixMilli(int64(v)).Format("2006-01-02 15:04")
+		}
+		if panel, ok := data["panel"].(map[string]any); ok {
+			result.Panel = parseSigninPanel(panel["days"])
 		}
 		results = append(results, result)
 	}

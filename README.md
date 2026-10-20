@@ -147,6 +147,9 @@ curl "http://127.0.0.1:8317/v0/resource/plugins/minimax-code/status"
 
 签到积分是**分批发放、各自过期**的（每天 400，连签第 4/7 天 1000，30 天过期），额度页会把最近一批的到期时间单独标出来。
 
+控制台页的**连签进度条**取自 claim 响应自带的 `data.panel.days`（不用另开 `signin/status`，
+那个接口还强制要 `timezone_id`）：绿底=已领（`status=3`），蓝框=今天。
+
 ## 错误处理
 
 上游错误转成 Anthropic 形状：
