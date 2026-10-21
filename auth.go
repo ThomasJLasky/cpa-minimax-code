@@ -105,6 +105,11 @@ func buildAuthData(st storage) authData {
 			"refresh_token":            st.RefreshToken,
 			"expires_at":               st.ExpiresAt,
 			"refresh_interval_seconds": interval,
+			// 本插件只有一个账号，一旦凭据被冷却/判成不可用，选择器就直接 503
+			// "auth_unavailable"，请求根本进不到插件里，也就没法用「请求顺带触发就地续期」
+			// 这条快路；只能干等宿主下一次刷新（实测最长 15 分钟量级）。
+			// 关掉冷却换来的是：上游 429/5xx 时这个凭据不会被摘出轮询，会被持续重试。
+			"disable_cooling": true,
 		},
 		Attributes: map[string]string{
 			"region":                   st.Region,
@@ -299,6 +304,12 @@ func handleAuthRefresh(ctx context.Context, request []byte) (any, error) {
 	}
 	tok, errRefresh := refreshAccessToken(ctx, st.Region, st.RefreshToken)
 	if errRefresh != nil {
+		// 宿主对刷新失败的日志只在 debug 级别，出问题时什么都看不到；而刷新失败的
+		// 分类结果决定凭据是「5 分钟后自己再来」还是「被永久摘出轮询池」，
+		// 必须留痕，否则下次掉线又是从零开始猜。
+		hostLog("", "error", "minimax-code: auth.refresh failed", map[string]any{
+			"error": errRefresh.Error(),
+		})
 		return nil, errRefresh
 	}
 	expiresAt := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -181,7 +182,60 @@ func refreshAccessToken(ctx context.Context, region, refreshToken string) (*toke
 	form.Set("scope", oauthScope)
 	form.Set("audience", audience)
 
-	req, errReq := http.NewRequestWithContext(ctx, http.MethodPost, siteFor(region).account+"/oauth2/token", strings.NewReader(form.Encode()))
+	body := form.Encode()
+	// 换 token 是账号能不能续命的唯一入口，而宿主对「看起来像 401 的刷新失败」会把凭据
+	// 永久摘出轮询池（见 auth.go:handleAuthRefresh 的注释）。刚连上新网络时 DNS/链路
+	// 常常要几百毫秒到几秒才就绪，所以这里只为**传输层错误**做有界重试；
+	// 服务端给出明确状态码就不再重试，避免把真拒绝掩盖成抖动。
+	delays := []time.Duration{0, 2 * time.Second, 5 * time.Second}
+	var lastErr error
+	for _, delay := range delays {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		out, errDo := doTokenRefresh(ctx, region, body)
+		if errDo == nil {
+			return out, nil
+		}
+		lastErr = errDo
+		var httpErr *refreshHTTPError
+		if errors.As(errDo, &httpErr) {
+			return nil, errDo
+		}
+	}
+	return nil, lastErr
+}
+
+// refreshHTTPError 表示服务端确实应答了但状态码不对（或回了空 access_token）。
+//
+// 措辞在这里是有后果的：宿主的 refreshErrorFromError 只要从错误文本里认出
+// "status 401"/"401 unauthorized"，就把 LastError 记成 Code=unauthorized 并把
+// NextRefreshAfter **清零**，凭据从此被 auto-refresh 循环和选择器双双跳过，
+// 只有重启进程或重新授权才能出来（sdk/cliproxy/auth/conductor_cooldown.go:1553、
+// conductor_refresh.go:495-507、auto_refresh_loop.go:360）。
+// 所以只有**确凿的 OAuth 拒绝**（响应里带 error 字段，如 invalid_grant）才用
+// "status 401" 这个形状——那种情况本来就该停下来要人重新登录。
+// 401 但没有任何 OAuth error 字段（新网络里常见的强制门户/透明代理劫持）不能
+// 冒充成吊销，改用不匹配的措辞，让宿主走 5 分钟退避、保留自动恢复的机会。
+type refreshHTTPError struct {
+	status     int
+	body       string
+	oauthError string
+}
+
+func (e *refreshHTTPError) Error() string {
+	if e.oauthError == "" && e.status == http.StatusUnauthorized {
+		return fmt.Sprintf("minimax refresh rejected (http %d, no oauth error body): %s", e.status, truncate(e.body, 300))
+	}
+	return fmt.Sprintf("minimax refresh status %d: %s", e.status, truncate(e.body, 300))
+}
+
+func doTokenRefresh(ctx context.Context, region, form string) (*tokenResponse, error) {
+	req, errReq := http.NewRequestWithContext(ctx, http.MethodPost, siteFor(region).account+"/oauth2/token", strings.NewReader(form))
 	if errReq != nil {
 		return nil, errReq
 	}
@@ -197,7 +251,7 @@ func refreshAccessToken(ctx context.Context, region, refreshToken string) (*toke
 	var out tokenResponse
 	_ = json.Unmarshal(raw, &out)
 	if resp.StatusCode >= 400 || out.AccessToken == "" {
-		return nil, fmt.Errorf("refresh HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return nil, &refreshHTTPError{status: resp.StatusCode, body: string(raw), oauthError: out.Error}
 	}
 	return &out, nil
 }

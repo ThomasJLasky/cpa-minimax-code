@@ -30,9 +30,10 @@ MiniMax Code 的订阅额度不在开放平台 API Key 上，而在**账号级�
 - **原生协议**：插件声明 `executor_input_formats: ["anthropic"]`，宿主命中后**不做翻译**，把 `/v1/messages` 原始请求体直接交给插件转发给 mavis。`thinking` 块（带 signature）、`tool_use` 全部原样保真。
 - **设备码登录**：OAuth 2.0 + PKCE（`client_id=mcode-public`），面板里点一下就能加账号，不依赖本机装没装 Code 客户端。
 - **自动续期**：access token 1 小时过期、refresh token 每次轮换。插件只实现 `auth.refresh`，由宿主按 `NextRefreshAfter` 调度并持久化新凭证。注意宿主只给内置 provider 配了续期提前量，插件必须在 `AuthData.Metadata` 里同时给出 `refresh_interval_seconds`、`expires_at`、`refresh_token`，否则 auto-refresh 循环根本不会调度（详见 `auth.go:buildAuthData`）。
+- **单账号不被冷却摘掉**：`Metadata.disable_cooling=true`。本插件只有一个账号，凭据一旦被判不可用就从轮询池摘掉，请求 15ms 内直接 503 `auth_unavailable`、根本进不到插件，也就没法靠「请求顺带触发就地续期」恢复，只能等宿主的下一次刷新 tick。实测同一场景（把 `expires_at` 写成过去值）：不带该开关 → 503 持续 6 分半、期间零重试；带上 → 几秒内就地续期、请求 200。代价是上游 429/5xx 时这个凭据不会被冷却摘掉，会被持续重试。
 - **额度查询**：`quota_provider` 读 `credit/details`，汇总成「剩余 / 已消耗 / 累计 / 批次 / 7 天内过期」。
 - **每日签到**：后台协程在北京时间 10:00 后自动领取，claim 幂等；也能在控制台页手动点。
-- **错误分类**：上游 400/401/402/403/429/529 映射成 Anthropic 的 `error.type`，流式下发 `event: error`。
+- **错误分类**：上游 400/401/402/403/429/529 映射成 Anthropic 的 `error.type`，流式下发 `event: error`；只有 401 例外，走 `host.stream.close` 的错误通道，好让宿主识别成凭据问题、就地续期后重试。
 - **零第三方依赖**：只用标准库 + cgo，`go.mod` 两行。
 
 ## 安装
@@ -174,6 +175,15 @@ curl "http://127.0.0.1:8317/v0/resource/plugins/minimax-code/status"
 > 消息里刻意写成 `upstream status 401` 而不是 `upstream 401`：宿主的 `isUnauthorizedError` 只认
 > `StatusCode==401` 或文本 `status 401` / `401 unauthorized`，命中它才会先调 `auth.refresh` 再重试，
 > 而不是把这个账号判死、让后面的请求全变成 `auth_unavailable` 503。
+>
+> 但**只有确凿的 401 才能用这个形状**，两处的区别很要紧：
+>
+> - 执行路径不再本地预判 `expires_at` 然后凭空造一条 401，一律让 mavis 判——真过期才有证据。
+> - `auth.refresh` 的失败：如果错误文本长得像 `status 401`，宿主会把 `NextRefreshAfter` **清零**并把
+>   凭据永久摘出轮询池（`sdk/cliproxy/auth/conductor_refresh.go:495-507`），之后 auto-refresh 和
+>   选择器双双跳过它，只有重启进程或重新授权才出得来。所以刷新失败里只有响应带 OAuth `error`
+>   字段（`invalid_grant` 这类，本来就该重新登录）才用 `status 401`；换新网络时强制门户/透明代理
+>   伪装的 401 改用别的措辞，让宿主走 5 分钟退避、保留自愈。传输层错误还会做有界重试（0/2/5 秒）。
 
 ## 工作原理
 

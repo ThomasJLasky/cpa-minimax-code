@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 )
 
-const pluginVersion = "0.5.4"
+const pluginVersion = "0.6.1"
 
 func handleMethod(method string, request []byte) ([]byte, error) {
 	ctx := context.Background()

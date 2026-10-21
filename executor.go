@@ -12,15 +12,14 @@ import (
 
 const streamTimeout = 30 * time.Minute
 
-// expiredCredentialError 本地判断凭据已过期时返回的错误。
-//
-// 必须走 upstreamError(401,…) 而不是普通 fmt.Errorf：宿主要么按文本里的
-// "status 401" 判定 unauthorized 并先调 auth.refresh 再重试，要么把这个账号
-// 判成 credential-scoped 失败直接摘出轮询池，剩下的就是 auth_unavailable 503。
-func expiredCredentialError(st storage) error {
-	return upstreamError(http.StatusUnauthorized,
-		fmt.Sprintf("access token expired at %s, waiting for host refresh", time.Unix(st.ExpiresAt, 0).Format(time.RFC3339)))
-}
+// 执行路径刻意**不做**「本地先看 expires_at、过期就直接报 401」的预判。
+// 那样等于在完全没有上游证据时把一条 401 送进宿主的分类器，而宿主对 401 类失败的
+// 处置是把凭据从轮询池摘掉（conductor_refresh.go:495-507 会清零 NextRefreshAfter，
+// 之后 auto_refresh_loop 和选择器双双跳过，只有重启或重新授权能出来）。
+// 刚连上新网络、DNS/链路还没就绪的那几十秒最容易撞上——表现出来就是
+// 「网络回来了，账号却再也用不了」。改成一律让上游判：
+// 真过期 → mavis 回 401 → 宿主先 auth.refresh 再重试这条请求；
+// 网络不通 → 传输层错误，不属于 unauthorized，走退避、能自动恢复。
 
 func handleExecutorExecute(ctx context.Context, request []byte) (any, error) {
 	var req executorRequest
@@ -30,9 +29,6 @@ func handleExecutorExecute(ctx context.Context, request []byte) (any, error) {
 	st, errStorage := decodeStorage(req.StorageJSON)
 	if errStorage != nil {
 		return nil, errStorage
-	}
-	if st.ExpiresAt > 0 && time.Now().Unix() > st.ExpiresAt-30 {
-		return nil, expiredCredentialError(st)
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, requestTimeout())
@@ -82,9 +78,6 @@ func handleExecutorExecuteStream(ctx context.Context, request []byte) (any, erro
 	st, errStorage := decodeStorage(req.StorageJSON)
 	if errStorage != nil {
 		return nil, errStorage
-	}
-	if st.ExpiresAt > 0 && time.Now().Unix() > st.ExpiresAt-30 {
-		return nil, expiredCredentialError(st)
 	}
 	if req.StreamID == "" {
 		return nil, fmt.Errorf("stream_id is required for streaming execution")
@@ -149,6 +142,13 @@ func streamUpstream(streamID, callbackID, region, token string, payload []byte, 
 			"model":     clientModel,
 			"body":      truncate(string(body), 500),
 		})
+		if resp.StatusCode == http.StatusUnauthorized {
+			// 401 必须走**错误通道**，不能只发 event: error 帧：宿主的 isUnauthorizedError
+			// 看的是 chunk.Err 的文本，命中才会先调 auth.refresh 再重试这条请求；
+			// 发帧的话宿主把它当正常内容转给客户端，续期永远不会被触发。
+			fail(upstreamError(resp.StatusCode, string(body)).Error())
+			return
+		}
 		frame := upstreamErrorFrame(resp.StatusCode, string(body))
 		if _, errEmit := hostCall(methodHostStreamEmit, streamEmitRequest{StreamID: streamID, Payload: frame}); errEmit != nil {
 			hostLog(callbackID, "warn", "minimax-code: host.stream.emit failed", map[string]any{
